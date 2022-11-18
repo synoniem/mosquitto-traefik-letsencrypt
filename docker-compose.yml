@@ -1,0 +1,104 @@
+version: '3'
+
+services:
+  traefik:
+    # The official v2 Traefik docker image. Currently 2.8
+    image: traefik:${TRAEFIK_DOCKER_TAG}
+    container_name: traefik
+    command:
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.file.directory=/configs/"
+      - "--entryPoints.websecure.address=:443"
+      - "--entryPoints.mqtt.address=:8883"
+      - "--entryPoints.websock.address=:8083"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      # Use staging when testing, otherwise Traefik reaches the daily limit easily by firing 1 challenge per second
+      #- "--certificatesresolvers.myresolver.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+      - "--certificatesresolvers.myresolver.acme.email=${MQTT_LETSENCRYPT_EMAIL}"
+      - "--certificatesresolvers.myresolver.acme.storage=/acme/acme.json"
+    ports:
+      # The HTTP port
+      #- "80:80" (disabled because using tlschallenge)
+      # The HTTPS port
+      - "443:443"
+      # The Web UI (if enabled by --api.insecure=true)
+      #- "8080:8080"
+      # The mqtt port (non TLS disabled)
+      #- "1883:1883"
+      # The mqtt TLS port
+      - "8883:8883"
+      # The websocket port for mqtt (TLS)
+      - "8083:8083"
+    volumes:
+      # So that Traefik can listen to the Docker events
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-acme:/acme
+      - traefik-configs:/configs
+    networks:
+      - proxynet
+    restart: always
+  mqtt:
+    image: eclipse-mosquitto
+    container_name: mqtt
+#    expose:
+#      - "1883"
+#      - "8083"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.tcp.routers.mqtt.rule=HostSNI(`${MQTT_VIRTUAL_HOST}`)"
+      - "traefik.tcp.routers.mqtt.entrypoints=mqtt"
+      - "traefik.tcp.routers.mqtt.service=mqttservice"
+      - "traefik.tcp.routers.mqtt.tls=true"
+# Because Traefik handles TLS outside Mosquitto internal does not need TLS
+      - "traefik.tcp.services.mqttservice.loadbalancer.server.port=1883"
+# Websock uses the http protocol but in combination with a TCP handler on port 8883 for mqtt you need to specify it
+      - "traefik.http.routers.websock.rule=Host(`${MQTT_VIRTUAL_HOST}`)"
+      - "traefik.http.routers.websock.entrypoints=websock"
+      - "traefik.http.routers.websock.service=websockservice"
+      - "traefik.http.routers.websock.tls=true"
+      - "traefik.http.routers.websock.tls.certresolver=myresolver"
+# Because Traefik handles https outside Mosquitto so websock internal does not need TLS
+      - "traefik.http.services.websockservice.loadbalancer.server.port=8083"
+    volumes:
+      - mosquitto-conf:/mosquitto/config
+      - mosquitto-log:/mosquitto/log
+      - mosquitto-data:/mosquitto/data
+    networks:
+      - proxynet
+    restart: always
+volumes:
+  traefik-acme:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${PWD}/traefik-acme
+  traefik-configs:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${PWD}/traefik-configs
+  mosquitto-conf:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${PWD}/mosquitto/config
+  mosquitto-log:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${PWD}/mosquitto/log
+  mosquitto-data:
+    driver: local
+    driver_opts:
+      o: bind
+      type: none
+      device: ${PWD}/mosquitto/data
+networks:
+  proxynet:
+    external: false

@@ -1,0 +1,7 @@
+http:
+    middlewares:
+        my-AddForwardedHeader:
+            plugin:
+                AddForwardedHeader:
+                    by: Traefik
+                    forHeader: X-Real-Ip
